@@ -157,28 +157,54 @@ if [ "$CONFIRM" != "yes" ]; then
     exit 0
 fi
 
-# Step 3: Force revoke leases
+# Ask for parallelism level
 echo ""
-print_info "Step 3: Force revoking irrevocable leases..."
-REVOKED=0
-FAILED=0
-CURRENT=0
+read -p "Enter number of parallel revocations (1-50, default 10): " PARALLEL
+PARALLEL=${PARALLEL:-10}
+if ! [[ "$PARALLEL" =~ ^[0-9]+$ ]] || [ "$PARALLEL" -lt 1 ] || [ "$PARALLEL" -gt 50 ]; then
+    print_error "Invalid number. Using default of 10."
+    PARALLEL=10
+fi
+print_info "Will run ${PARALLEL} revocations in parallel"
 
-while IFS= read -r LEASE_ID; do
-    if [ -n "$LEASE_ID" ]; then
-        ((CURRENT++))
-        print_info "[$CURRENT/$TO_REVOKE_COUNT] Revoking lease: ${LEASE_ID}"
-        
-        if vault lease revoke -force -prefix "$LEASE_ID" 2>&1; then
-            ((REVOKED++))
-            print_info "✓ Successfully revoked: ${LEASE_ID}"
-        else
-            ((FAILED++))
-            print_error "✗ Failed to revoke: ${LEASE_ID}"
-        fi
-        echo ""
+# Step 3: Force revoke leases in parallel
+echo ""
+print_info "Step 3: Force revoking irrevocable leases (parallelism: ${PARALLEL})..."
+
+# Create temp directory for tracking results
+RESULTS_DIR=$(mktemp -d)
+trap "rm -rf $RESULTS_DIR" EXIT
+
+# Worker function for parallel revocation
+revoke_lease() {
+    local lease_id="$1"
+    local results_dir="$2"
+    local idx="$3"
+    local total="$4"
+
+    if vault lease revoke -force -prefix "$lease_id" > /dev/null 2>&1; then
+        echo "OK" > "${results_dir}/result_${idx}"
+        echo -e "${GREEN}[INFO]${NC} [${idx}/${total}] ✓ Revoked: ${lease_id}"
+    else
+        echo "FAIL" > "${results_dir}/result_${idx}"
+        echo -e "${RED}[ERROR]${NC} [${idx}/${total}] ✗ Failed: ${lease_id}"
     fi
-done <<< "$LEASES_TO_REVOKE"
+}
+export -f revoke_lease
+export GREEN RED NC RESULTS_DIR TO_REVOKE_COUNT
+
+# Run revocations in parallel
+IDX=0
+echo "$LEASES_TO_REVOKE" | while IFS= read -r LEASE_ID; do
+    if [ -n "$LEASE_ID" ]; then
+        ((IDX++))
+        echo "${LEASE_ID} ${RESULTS_DIR} ${IDX} ${TO_REVOKE_COUNT}"
+    fi
+done | xargs -P "$PARALLEL" -L 1 bash -c 'revoke_lease "$1" "$2" "$3" "$4"' _
+
+# Count results
+REVOKED=$(grep -rl "OK" "$RESULTS_DIR" 2>/dev/null | wc -l | tr -d ' ')
+FAILED=$(grep -rl "FAIL" "$RESULTS_DIR" 2>/dev/null | wc -l | tr -d ' ')
 
 # Step 4: Verify final count
 print_info "Step 4: Verifying irrevocable lease count..."
