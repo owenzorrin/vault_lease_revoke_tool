@@ -1,4 +1,4 @@
-# Vault Lease Revoke Tool
+# Vault Lease Revoke Tool & Lease Report Tool
 
 A set of bash scripts for managing, reporting on, and force-revoking irrevocable leases in [HashiCorp Vault](https://www.vaultproject.io/). Irrevocable leases occur when Vault is unable to revoke a lease (e.g., due to backend connectivity issues or plugin errors), and they can accumulate over time if left unaddressed.
 
