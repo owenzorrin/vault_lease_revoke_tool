@@ -20,45 +20,61 @@ echo "=== Vault Lease Report ==="
 echo "Time: $(date)"
 echo ""
 
-# Initialize grand total
-grand_total=0
-
 # Get all top-level mounts
-while read -r mount; do
+vault list -format=json sys/leases/lookup 2>/dev/null | jq -r '.[]' | while read -r mount; do
     mount_clean="${mount%/}"
     echo "Mount: ${mount_clean}"
-
-    # Initialize mount total
-    mount_total=0
-
-    # Navigate through creds if it exists
-    if vault list "sys/leases/lookup/${mount}creds" &>/dev/null; then
-        # List all roles under creds
-        while read -r role; do
-            role_clean="${role%/}"
-            count=$(vault list "sys/leases/lookup/${mount}creds/${role}" 2>/dev/null | wc -l)
-            actual_count=$((count - 2))
-            echo "  ├─ ${role_clean}: ${actual_count} leases"
-            mount_total=$((mount_total + actual_count))
-        done < <(vault list -format=json "sys/leases/lookup/${mount}creds/" 2>/dev/null | jq -r '.[]')
-
-        echo "  └─ Total for ${mount_clean}: ${mount_total} leases"
+    
+    # Check if this is an auth mount
+    if [[ "$mount" == auth/* ]]; then
+        # For auth mounts, we need to go deeper: auth/ -> auth/approle/ -> auth/approle/login
+        # First, list what's under auth/
+        vault list -format=json "sys/leases/lookup/${mount}" 2>/dev/null | jq -r '.[]' | while read -r auth_method; do
+            auth_method_clean="${auth_method%/}"
+            
+            # Now check for login under this auth method
+            if vault list "sys/leases/lookup/${mount}${auth_method}login" &>/dev/null; then
+                count=$(vault list "sys/leases/lookup/${mount}${auth_method}login" 2>/dev/null | wc -l)
+                actual_count=$((count - 2))
+                echo "  └─ ${auth_method_clean}/login: ${actual_count} leases"
+            fi
+        done
     else
-        echo "  └─ No creds found"
+        # For secret engine mounts, look for "creds" path
+        if vault list "sys/leases/lookup/${mount}creds" &>/dev/null; then
+            vault list -format=json "sys/leases/lookup/${mount}creds/" 2>/dev/null | jq -r '.[]' | while read -r role; do
+                role_clean="${role%/}"
+                count=$(vault list "sys/leases/lookup/${mount}creds/${role}" 2>/dev/null | wc -l)
+                actual_count=$((count - 2))
+                echo "  └─ ${role_clean}: ${actual_count} leases"
+            done
+        else
+            echo "  └─ No creds found"
+        fi
     fi
-
+    
     echo ""
-    grand_total=$((grand_total + mount_total))
-done < <(vault list -format=json sys/leases/lookup | jq -r '.[]')
+done
 
-# Total count across all mounts
+# Grand total
 echo "=== Grand Total ==="
 total=$(vault list -format=json sys/leases/lookup 2>/dev/null | jq -r '.[]' | while read -r mount; do
-    if vault list "sys/leases/lookup/${mount}creds" &>/dev/null; then
-        vault list -format=json "sys/leases/lookup/${mount}creds/" 2>/dev/null | jq -r '.[]' | while read -r role; do
-            count=$(vault list "sys/leases/lookup/${mount}creds/${role}" 2>/dev/null | wc -l)
-            echo $((count - 2))
+    if [[ "$mount" == auth/* ]]; then
+        # Handle auth mounts - go deeper into auth methods
+        vault list -format=json "sys/leases/lookup/${mount}" 2>/dev/null | jq -r '.[]' | while read -r auth_method; do
+            if vault list "sys/leases/lookup/${mount}${auth_method}login" &>/dev/null; then
+                count=$(vault list "sys/leases/lookup/${mount}${auth_method}login" 2>/dev/null | wc -l)
+                echo $((count - 2))
+            fi
         done
+    else
+        # Handle secret engine mounts
+        if vault list "sys/leases/lookup/${mount}creds" &>/dev/null; then
+            vault list -format=json "sys/leases/lookup/${mount}creds/" 2>/dev/null | jq -r '.[]' | while read -r role; do
+                count=$(vault list "sys/leases/lookup/${mount}creds/${role}" 2>/dev/null | wc -l)
+                echo $((count - 2))
+            done
+        fi
     fi
 done | awk '{sum+=$1} END {print sum}')
 
