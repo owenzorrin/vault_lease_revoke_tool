@@ -16,7 +16,7 @@ This toolset helps operators identify, inspect, and clean up irrevocable leases,
 
 ## Scripts
 
-### `script.sc` — Irrevocable Lease Revocation
+### `revoke_irrevocable_leases.sh` — Irrevocable Lease Revocation
 
 An interactive script that walks through the full lifecycle of irrevocable lease cleanup:
 
@@ -73,7 +73,7 @@ Total: 22 leases
   - `sys/leases` (read, list)
   - `sys/leases/count` (read)
   - `sys/leases/lookup` (list)
-  - `sys/leases/revoke` (update) — for `script.sc` only
+  - `sys/leases/revoke` (update) — for `revoke_irrevocable_leases.sh` only
 
 ## Usage
 
@@ -83,7 +83,7 @@ git clone https://github.com/owenzorrin/vault_lease_revoke_tool.git
 cd vault_lease_revoke_tool
 
 # Make scripts executable (if needed)
-chmod +x script.sc count_leases_v2.sh
+chmod +x revoke_irrevocable_leases.sh count_leases_v2.sh
 
 # Set required environment variables
 export VAULT_ADDR='https://vault.example.com:8200'
@@ -93,7 +93,7 @@ export VAULT_TOKEN='hvs.your-token-here'
 ./count_leases_v2.sh
 
 # Interactively revoke irrevocable leases
-./script.sc
+./revoke_irrevocable_leases.sh
 ```
 
 ## Important Considerations
