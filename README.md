@@ -20,46 +20,64 @@ This toolset helps operators identify, inspect, and clean up irrevocable leases,
 
 An interactive script that walks through the full lifecycle of irrevocable lease cleanup:
 
+0. **Target banner** — Shows the Vault address, cluster name, version, namespace, and the token's name/policies before anything else, so you can confirm you are pointed at the right environment
 1. **Count** — Queries `sys/leases/count` to get the total number of irrevocable leases
-2. **List** — Retrieves all irrevocable leases via `sys/leases` with full details
+2. **List** — Retrieves all irrevocable leases via `sys/leases` with full details, and saves them to a **snapshot CSV** before anything is changed
 3. **Preview** — Displays the first 5 lease IDs so you can verify before taking action
 4. **Interactive menu** with four options:
    - Revoke **all** irrevocable leases
    - Revoke a **specific number** of leases
    - **Display** detailed lease information (lease ID + error reason) and exit
    - **Cancel** and exit without changes
-5. **Force revoke** — Uses `vault lease revoke -force -prefix` on each selected lease
+5. **Force revoke** — Uses `vault lease revoke -force -prefix` on each selected lease. The confirmation prompt repeats the Vault address and cluster name. Any error returned by Vault is shown on screen and saved
 6. **Verify** — Re-checks the irrevocable lease count after revocation
-7. **Summary** — Reports initial count, revoked, failed, and remaining leases
+7. **Summary** — Reports initial count, selected, revoked, failed, and remaining leases, plus the paths of the audit files
 
 The script includes input validation, a confirmation prompt before destructive operations, and colored terminal output for readability.
 
+**Exit codes:** `0` if every selected lease was revoked (even if other, unselected irrevocable leases remain); `1` if any revocation failed or the run could not start.
+
+#### Audit files
+
+Each run that reaches the revocation menu writes two CSV files to `./lease_audit/` (override with `AUDIT_DIR=/path`). The files are created with owner-only permissions (`umask 077`) and `lease_audit/` is listed in `.gitignore`.
+
+| File | Written | Columns |
+|---|---|---|
+| `irrevocable_leases_<UTC timestamp>.csv` | Before any revocation | `lease_id,error` |
+| `revoke_results_<UTC timestamp>.csv` | After revocation | `timestamp,lease_id,result,message` (`result` is `OK` or `FAIL`; `message` holds Vault's error text for failures) |
+
 ### `count_leases_v2.sh` — Lease Count Report
 
-Generates a structured report of active leases across all Vault secret engine mounts:
+Generates a structured report of active leases across Vault mounts:
 
 - Iterates through all top-level mounts via `sys/leases/lookup`
-- For each mount, lists roles under the `creds/` path
-- Counts leases per role and totals per mount
-- Outputs a grand total across all mounts
+- For each secret engine mount, lists roles under the `creds/` path and counts leases per role
+- For each `auth/<method>`, counts leases under `login`
+- Outputs a grand total across all counted paths, collected in a single pass
+
+**Scope:** only `<mount>/creds/<role>` and `auth/<method>/login` are counted. Leases under other paths (for example `aws/sts/...`) are not included, and the report prints this scope at the top.
+
+**Errors are not hidden.** An empty path counts as `0`. Any other failure (for example `permission denied` or a connection error) is printed to stderr and the script exits with status `1`, so a partial report is never mistaken for a complete one.
 
 Example output:
 
 ```
 === Vault Lease Report ===
 Time: Mon Feb  3 10:00:00 UTC 2026
+Scope: leases under <mount>/creds/<role> and auth/<method>/login (other lease paths are not counted)
 
 Mount: database
-  ├─ readonly: 12 leases
-  ├─ readwrite: 3 leases
-  └─ Total for database: 15 leases
+  └─ readonly: 12 leases
+  └─ readwrite: 3 leases
 
 Mount: aws
-  ├─ deploy-role: 7 leases
-  └─ Total for aws: 7 leases
+  └─ deploy-role: 7 leases
+
+Mount: auth
+  └─ approle/login: 4 leases
 
 === Grand Total ===
-Total: 22 leases
+Total: 26 leases
 ```
 
 ## Prerequisites
